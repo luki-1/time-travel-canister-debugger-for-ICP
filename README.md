@@ -39,7 +39,7 @@ See [docs/GUIDE.md](docs/GUIDE.md) for a full walk-through.
 ## Prerequisites
 
 - `icp` CLI — https://github.com/dfinity/icp-cli (`icp --version` should work)
-- Rust stable + `wasm32-unknown-unknown` target
+- Rust (`rustup`) — toolchain and wasm target are pinned in `rust-toolchain.toml` and installed automatically
 - Node.js ≥ 20
 
 ## Quickstart
