@@ -309,7 +309,7 @@ them without requiring any extra instrumentation. An event is flagged if:
 |---|---|
 | `method_exited` with a non-null `reject` field | canister panicked or trapped |
 | `call_returned` with a non-null `reject` field | inter-canister call rejected at the IC level |
-| `note` whose label matches `/fail&#124;reject&#124;rollback/i` | `trace_event!("submit_payment:rollback_missing")` |
+| `note` whose label matches `/fail\|reject\|rollback/i` | `trace_event!("submit_payment:rollback_missing")` |
 
 > **Note on Candid errors:** a `Result::Err` returned by a callee is
 > *not* an IC-level reject — it's a successful reply with an `Err`
