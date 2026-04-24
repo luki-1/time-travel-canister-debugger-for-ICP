@@ -1,0 +1,13 @@
+[package]
+name = "ic-debug-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Shared trace event types for ic-debug."
+
+[dependencies]
+serde = { workspace = true }
+serde_bytes = { workspace = true }
+candid = { workspace = true }
+ciborium = { workspace = true }
+uuid = { workspace = true }

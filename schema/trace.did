@@ -1,0 +1,25 @@
+// Canonical Candid representation of an ic-debug event, for canister
+// drain endpoints and agent-side decoding.
+
+type Principal = principal;
+
+type EventKind = variant {
+  IngressEntered : record { method : text; caller : Principal; args_hash : blob };
+  MethodEntered  : record { method : text; caller : Principal; args : vec record { text; text } };
+  MethodExited   : record { reject : opt text };
+  CallSpawned    : record { target : Principal; method : text; args_hash : blob };
+  CallReturned   : record { reject : opt text };
+  StateSnapshot  : record { key : text; cbor : blob };
+  TimerFired     : record { label : text };
+  Note           : record { label : text };
+};
+
+type Event = record {
+  trace_id   : text;          // UUID in textual form
+  seq        : nat64;
+  parent_seq : opt nat64;
+  span_id    : nat64;
+  ts_nanos   : nat64;
+  canister   : opt Principal;
+  kind       : EventKind;
+};

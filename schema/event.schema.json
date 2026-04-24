@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ic-debug.local/schema/event.json",
+  "title": "ic-debug Event",
+  "type": "object",
+  "required": ["trace_id", "seq", "span_id", "ts_nanos", "kind"],
+  "properties": {
+    "trace_id": { "type": "string", "format": "uuid" },
+    "seq": { "type": "integer", "minimum": 0 },
+    "parent_seq": { "type": ["integer", "null"], "minimum": 0 },
+    "span_id": { "type": "integer", "minimum": 0 },
+    "ts_nanos": { "type": "integer", "minimum": 0 },
+    "canister": { "type": ["string", "null"], "description": "Canister principal (textual form)" },
+    "kind": {
+      "oneOf": [
+        { "type": "object", "required": ["kind", "method", "caller", "args_hash"],
+          "properties": { "kind": { "const": "ingress_entered" }, "method": { "type": "string" },
+            "caller": { "type": "string" }, "args_hash": { "type": "string" } } },
+        { "type": "object", "required": ["kind", "method", "caller"],
+          "properties": { "kind": { "const": "method_entered" }, "method": { "type": "string" },
+            "caller": { "type": "string" } } },
+        { "type": "object", "required": ["kind"],
+          "properties": { "kind": { "const": "method_exited" },
+            "reject": { "type": ["string", "null"] } } },
+        { "type": "object", "required": ["kind", "target", "method", "args_hash"],
+          "properties": { "kind": { "const": "call_spawned" }, "target": { "type": "string" },
+            "method": { "type": "string" }, "args_hash": { "type": "string" } } },
+        { "type": "object", "required": ["kind"],
+          "properties": { "kind": { "const": "call_returned" },
+            "reject": { "type": ["string", "null"] } } },
+        { "type": "object", "required": ["kind", "key", "cbor"],
+          "properties": { "kind": { "const": "state_snapshot" }, "key": { "type": "string" },
+            "cbor": { "type": "string", "description": "base64 CBOR" } } },
+        { "type": "object", "required": ["kind", "label"],
+          "properties": { "kind": { "const": "timer_fired" }, "label": { "type": "string" } } },
+        { "type": "object", "required": ["kind", "label"],
+          "properties": { "kind": { "const": "note" }, "label": { "type": "string" } } }
+      ]
+    }
+  }
+}

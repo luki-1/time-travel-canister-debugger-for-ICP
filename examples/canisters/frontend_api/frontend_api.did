@@ -1,0 +1,9 @@
+type PaymentStatus = variant { Pending; Locked; Completed; Failed };
+type Payment = record { id : nat64; amount : nat64; status : PaymentStatus };
+
+service : {
+  configure      : (principal, principal) -> ();
+  submit_payment : (record { trace_id : blob; parent_seq : nat64; parent_span : nat64 }, nat64) -> (Payment);
+  get_payment    : (nat64) -> (opt Payment) query;
+  __debug_drain  : () -> (blob) query;
+}

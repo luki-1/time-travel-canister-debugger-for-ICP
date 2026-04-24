@@ -1,0 +1,23 @@
+[package]
+name = "ic-debug-trace"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Canister-side instrumentation for ic-debug (macros + event sink)."
+
+[features]
+default = []
+# Enabled only for instrumented builds; zero-cost when off.
+enabled = []
+
+[dependencies]
+ic-debug-core = { path = "../ic-debug-core" }
+ic-debug-trace-macros = { path = "../ic-debug-trace-macros" }
+ic-cdk = { workspace = true }
+ic-cdk-macros = { workspace = true }
+candid = { workspace = true }
+serde = { workspace = true }
+serde_bytes = { workspace = true }
+ciborium = { workspace = true }
+sha2 = { workspace = true }
+uuid = { workspace = true }

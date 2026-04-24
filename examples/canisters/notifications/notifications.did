@@ -1,0 +1,8 @@
+type Receipt = record { payment_id : nat64; delivered : bool };
+
+service : {
+  send_receipt  : (nat64) -> (variant { Ok : Receipt; Err : text });
+  arm_failure   : () -> ();
+  get_receipt   : (nat64) -> (opt Receipt) query;
+  __debug_drain : () -> (blob) query;
+}

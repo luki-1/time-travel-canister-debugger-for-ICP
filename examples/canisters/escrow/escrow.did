@@ -1,0 +1,8 @@
+type Lock = record { payment_id : nat64; amount : nat64; released : bool };
+
+service : {
+  lock_funds    : (nat64, nat64) -> (Lock);
+  release       : (nat64) -> (opt Lock);
+  get_lock      : (nat64) -> (opt Lock) query;
+  __debug_drain : () -> (blob) query;
+}

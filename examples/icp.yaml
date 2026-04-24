@@ -1,0 +1,32 @@
+canisters:
+  - name: frontend_api
+    recipe:
+      type: "@dfinity/rust@v3.2.0"
+      configuration:
+        package: frontend_api
+
+  - name: escrow
+    recipe:
+      type: "@dfinity/rust@v3.2.0"
+      configuration:
+        package: escrow
+
+  - name: notifications
+    recipe:
+      type: "@dfinity/rust@v3.2.0"
+      configuration:
+        package: notifications
+
+  - name: ledger
+    recipe:
+      type: "@dfinity/rust@v3.2.0"
+      configuration:
+        package: ledger
+
+  - name: ui
+    recipe:
+      type: "@dfinity/asset-canister@v2.1.0"
+      configuration:
+        dir: ui/dist
+        build:
+          - cd ui && npm install && npm run build

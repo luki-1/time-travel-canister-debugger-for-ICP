@@ -1,0 +1,32 @@
+# Rust build artifacts
+target/
+
+# Node
+node_modules/
+dist/
+dist-ssr/
+*.local
+
+# ICP build cache (canister IDs in .icp/data/ should be committed)
+.icp/cache/
+
+# Trace recordings (local only — never commit real trace data)
+traces/
+*.sqlite
+*.sqlite-journal
+
+# Logs
+*.log
+
+# Environment
+.env
+.env.local
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editors
+.vscode/*
+!.vscode/extensions.json
+.idea

@@ -1,0 +1,20 @@
+{
+  "name": "ic-debug-agent-js",
+  "version": "0.0.1",
+  "description": "Agent wrapper that injects ic-debug trace IDs and streams events to the recorder.",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": ["dist", "src"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "echo \"Milestone 1\" && exit 0"
+  },
+  "peerDependencies": {
+    "@dfinity/agent": ">=1.0.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.0"
+  },
+  "license": "Apache-2.0"
+}
