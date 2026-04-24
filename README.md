@@ -4,9 +4,7 @@ A debugger that records every cross-canister call, state diff, cycle burn,
 timer trigger, and certified-data update, then lets you replay execution
 locally step by step.
 
-**Status:** Milestone 5 — end-to-end demo (record → replay → diff → UI)
-working against a local replica. See [docs/GUIDE.md](docs/GUIDE.md)
-for a walk-through.
+See [docs/GUIDE.md](docs/GUIDE.md) for a full walk-through.
 
 ## Layout
 
@@ -71,17 +69,6 @@ node examples/scripts/04-silent-error.mjs
 
 See **[docs/GUIDE.md](docs/GUIDE.md)** for full CLI/UI walk-through,
 event model, and instructions for instrumenting your own canisters.
-
-## Roadmap
-
-| Milestone | Scope | Status |
-|-----------|-------|--------|
-| 0 | Repo scaffold | ✅ |
-| 1 | Trace recorder: canister macros + agent wrapper + SQLite sink | ✅ |
-| 2 | Replay engine: deterministic local replay against `icp network` | ✅ |
-| 3 | State diff engine over CBOR snapshots | ✅ |
-| 4 | Web UI: call tree / timeline / state diff / raw Candid | ✅ |
-| 5 | Reference demo: failed-async-callback payment flow | ✅ |
 
 ## License
 
