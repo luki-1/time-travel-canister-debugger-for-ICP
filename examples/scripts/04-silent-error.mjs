@@ -12,17 +12,22 @@
 //
 //   ▶ ENTER  deposit
 //   · NOTE   ledger.deposit:enter
-//   ● STATE  account/alice = 50          ← alice funded
+//   ● STATE  account/alice-<run> = 50    ← alice funded
 //   ◀ EXIT
 //   ▶ ENTER  transfer
 //   · NOTE   ledger.transfer:enter
 //   ◀ EXIT                               ← clean exit, no ⚠, no STATE
 //
+// The account names include a short run suffix derived from the trace id so
+// every run starts from a clean slate — the ledger canister accumulates
+// deposits (`*bal += amount`), so reusing the same name across runs would
+// make alice's balance grow unboundedly.
+//
 // What to look for in the UI:
 //   1. The trace header shows NO ⚠ pill — zero flagged events.
-//   2. Stepping through the timeline, the state panel shows account/alice=50
+//   2. Stepping through the timeline, the state panel shows account/alice-…=50
 //      after the deposit, then nothing changes after the transfer exits.
-//   3. There is no account/bob entry — it was never created.
+//   3. There is no account/bob-… entry — it was never created.
 //   4. The only signal is the absence of the STATE events a successful
 //      transfer would have emitted.
 //
@@ -64,20 +69,25 @@ const ledger = Actor.createActor(ledgerIdl, {
 const trace = await newTrace(RECORDER, "example 4: silent error");
 console.log(`trace id: ${trace.id}`);
 
+// Unique per-run suffix so repeat runs don't accumulate on the same accounts.
+const run = trace.id.slice(0, 8);
+const alice = `alice-${run}`;
+const bob   = `bob-${run}`;
+
 // 1. Deposit 50 to alice — succeeds, emits state snapshot.
-await ledger.deposit(trace.header(), "alice", 50n);
-console.log(`deposited 50 → alice`);
+await ledger.deposit(trace.header(), alice, 50n);
+console.log(`deposited 50 → ${alice}`);
 
 // 2. Transfer 200 from alice — fails silently (alice only has 50).
 //    The canister returns false and exits without a trace_event!.
-const ok = await ledger.transfer(trace.header(), "alice", "bob", 200n);
-console.log(`transfer alice→bob 200: ${ok}`);   // false
+const ok = await ledger.transfer(trace.header(), alice, bob, 200n);
+console.log(`transfer ${alice}→${bob} 200: ${ok}`);   // false
 
 // Confirm state: alice unchanged, bob never created.
-const aliceBal = await ledger.balance("alice");
-const bobBal   = await ledger.balance("bob");
-console.log(`alice balance: ${aliceBal[0] ?? "none"}`);
-console.log(`bob   balance: ${bobBal[0]   ?? "none"}`);
+const aliceBal = await ledger.balance(alice);
+const bobBal   = await ledger.balance(bob);
+console.log(`${alice} balance: ${aliceBal[0] ?? "none"}`);
+console.log(`${bob} balance: ${bobBal[0]   ?? "none"}`);
 
 // Drain — only the ledger canister participated.
 const blob  = await ledger.__debug_drain();
@@ -92,4 +102,4 @@ console.log(``);
 console.log(`→ open http://127.0.0.1:9192 → "example 4: silent error"`);
 console.log(`  no ⚠ pill, no red rows — the transfer looks like it worked.`);
 console.log(`  step to the second EXIT and check the state panel:`);
-console.log(`  account/alice is still 50, account/bob was never created.`);
+console.log(`  account/${alice} is still 50, account/${bob} was never created.`);
