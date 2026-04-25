@@ -20,6 +20,14 @@ use axum::{
 use ic_debug_core::{Event, TraceId};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
+
+fn wall_now_nanos() -> u128 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0)
+}
 use tower_http::cors::CorsLayer;
 use tracing::{info, warn};
 
@@ -79,7 +87,7 @@ async fn ingest_events(
     let mut inserted = 0;
     for ev in &events {
         s.store.upsert_trace(&ev.trace_id.to_string(), None)?;
-        s.store.insert_event(ev)?;
+        s.store.insert_event(ev, wall_now_nanos())?;
         inserted += 1;
     }
     info!(count = inserted, "ingested events");
@@ -102,7 +110,7 @@ async fn ingest_drain(
     let mut inserted = 0;
     for ev in &events {
         s.store.upsert_trace(&ev.trace_id.to_string(), None)?;
-        s.store.insert_event(ev)?;
+        s.store.insert_event(ev, wall_now_nanos())?;
         inserted += 1;
     }
     info!(count = inserted, "ingested drain");

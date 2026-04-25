@@ -19,6 +19,7 @@ type EventRow = {
   parent_seq: number | null;
   span_id: number;
   ts_nanos: number;
+  recv_nanos: number | null;
   kind: EventKind;
 };
 
@@ -228,6 +229,10 @@ export default function App() {
   // ---- timeline feature state ----
   const [hiddenCanisters, setHiddenCanisters] = useState<Set<string>>(new Set());
   const [collapsed, setCollapsed] = useState<Set<number>>(new Set());
+  // Wall-clock timestamps are stamped recorder-side at ingest. The
+  // canister-side ic0.time() is frozen per ingress message, so it isn't
+  // exposed as a separate mode — it would just collapse to zero within
+  // each call.
   const [showTimestamps, setShowTimestamps] = useState(false);
   const [search, setSearch] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
@@ -303,7 +308,21 @@ export default function App() {
     );
   }, [search, trace, labelFor]);
 
-  const traceStartNs = trace?.events[0]?.ts_nanos ?? 0;
+  // Wall-clock is anchored on the MIN recv_nanos (not the first causal
+  // event), because drain order doesn't match causal order: a child
+  // canister's events can hit the recorder before the parent's. Anchoring
+  // on the earliest arrival keeps offsets non-negative — non-monotonicity
+  // along the (causal) timeline still reveals the real drain ordering.
+  const traceStartRecvNs = useMemo(() => {
+    if (!trace) return 0;
+    let min: number | null = null;
+    for (const e of trace.events) {
+      if (e.recv_nanos != null && (min === null || e.recv_nanos < min)) {
+        min = e.recv_nanos;
+      }
+    }
+    return min ?? 0;
+  }, [trace]);
 
   // Load trace list on mount.
   useEffect(() => {
@@ -438,7 +457,7 @@ export default function App() {
             setShowTimestamps={setShowTimestamps}
             stateMode={stateMode}
             setStateMode={setStateMode}
-            traceStartNs={traceStartNs}
+            traceStartRecvNs={traceStartRecvNs}
           />
         ) : (
           <div className="empty">
@@ -491,7 +510,7 @@ function TraceView({
   hiddenCanisters, toggleCanisterVisible,
   collapsed, toggleCollapse, exitForEnter, hiddenByCollapse,
   visibleIndices, searchMatches, search, setSearch, searchOpen, setSearchOpen,
-  showTimestamps, setShowTimestamps, stateMode, setStateMode, traceStartNs,
+  showTimestamps, setShowTimestamps, stateMode, setStateMode, traceStartRecvNs,
 }: {
   trace: Trace; diff: DiffDoc | null; cursor: number;
   setCursor: (c: number) => void; playing: boolean;
@@ -507,7 +526,7 @@ function TraceView({
   showTimestamps: boolean; setShowTimestamps: (b: boolean) => void;
   stateMode: "history" | "current";
   setStateMode: (m: "history" | "current") => void;
-  traceStartNs: number;
+  traceStartRecvNs: number;
 }) {
   const listRef = useRef<HTMLDivElement | null>(null);
   const searchRef = useRef<HTMLInputElement | null>(null);
@@ -603,9 +622,12 @@ function TraceView({
             const isDim = searchMatches != null && !searchMatches.has(i);
             const canCollapse = isEnter && exitIdx != null;
 
-            const relMs = showTimestamps
-              ? ((e.ts_nanos - traceStartNs) / 1e6).toFixed(1)
-              : null;
+            // Wall-clock — recorder-side SystemTime::now() at ingest, the
+            // only source with sub-message resolution.
+            const relMs =
+              showTimestamps && e.recv_nanos != null
+                ? ((e.recv_nanos - traceStartRecvNs) / 1e6).toFixed(1)
+                : null;
 
             return (
               <div
@@ -690,7 +712,7 @@ function TraceHeader({
         )}
         <button
           className={`ts-toggle ${showTimestamps ? "active" : ""}`}
-          title="toggle timestamps"
+          title="toggle wall-clock timestamps (recorder-side)"
           onClick={() => setShowTimestamps(!showTimestamps)}
         >
           +ms

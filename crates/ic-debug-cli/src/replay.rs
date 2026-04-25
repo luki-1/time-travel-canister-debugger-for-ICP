@@ -47,6 +47,7 @@ pub struct EventRow {
     pub parent_seq: Option<u64>,
     pub span_id: u64,
     pub ts_nanos: u128,
+    pub recv_nanos: Option<u128>,
     pub kind: EventKind,
 }
 
@@ -85,7 +86,7 @@ pub fn load(conn: &Connection, trace_id: &str) -> Result<(TraceSummary, Vec<Even
         .unwrap_or((0, String::new()));
 
     let mut stmt = conn.prepare(
-        "SELECT canister, seq, parent_seq, span_id, ts_nanos, payload_json
+        "SELECT canister, seq, parent_seq, span_id, ts_nanos, recv_nanos, payload_json
            FROM events
           WHERE trace_id = ?1
           ORDER BY CAST(ts_nanos AS INTEGER), canister, seq",
@@ -97,16 +98,21 @@ pub fn load(conn: &Connection, trace_id: &str) -> Result<(TraceSummary, Vec<Even
         let parent_seq: Option<i64> = r.get(2)?;
         let span_id: i64 = r.get(3)?;
         let ts_nanos_s: String = r.get(4)?;
-        let payload: String = r.get(5)?;
-        Ok((canister, seq, parent_seq, span_id, ts_nanos_s, payload))
+        let recv_nanos_s: Option<String> = r.get(5)?;
+        let payload: String = r.get(6)?;
+        Ok((canister, seq, parent_seq, span_id, ts_nanos_s, recv_nanos_s, payload))
     })?;
 
     let mut events = Vec::new();
     for r in rows {
-        let (canister, seq, parent_seq, span_id, ts_nanos_s, payload) = r?;
+        let (canister, seq, parent_seq, span_id, ts_nanos_s, recv_nanos_s, payload) = r?;
         let ts_nanos: u128 = ts_nanos_s
             .parse()
             .with_context(|| format!("parse ts_nanos {ts_nanos_s}"))?;
+        let recv_nanos: Option<u128> = match recv_nanos_s {
+            Some(s) => Some(s.parse().with_context(|| format!("parse recv_nanos {s}"))?),
+            None => None,
+        };
         let kind: EventKind = serde_json::from_str(&payload)
             .with_context(|| format!("decode kind json for event seq {seq}"))?;
         events.push(EventRow {
@@ -116,6 +122,7 @@ pub fn load(conn: &Connection, trace_id: &str) -> Result<(TraceSummary, Vec<Even
             parent_seq: parent_seq.map(|v| v as u64),
             span_id: span_id as u64,
             ts_nanos,
+            recv_nanos,
             kind,
         });
     }

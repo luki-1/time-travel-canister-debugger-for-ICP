@@ -31,7 +31,7 @@ impl Store {
         Ok(())
     }
 
-    pub fn insert_event(&self, ev: &Event) -> Result<()> {
+    pub fn insert_event(&self, ev: &Event, recv_nanos: u128) -> Result<()> {
         let c = self.conn.lock().unwrap();
         let trace_id = ev.trace_id.to_string();
         let (kind, method, caller, target, reject, snapshot_key) = decompose(&ev.kind);
@@ -40,9 +40,9 @@ impl Store {
         let canister = ev.canister.clone().unwrap_or_default();
         c.execute(
             "INSERT OR REPLACE INTO events
-             (trace_id, canister, seq, parent_seq, span_id, ts_nanos, kind,
+             (trace_id, canister, seq, parent_seq, span_id, ts_nanos, recv_nanos, kind,
               method, caller, target, reject, snapshot_key, payload_json)
-             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13)",
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14)",
             params![
                 trace_id,
                 canister,
@@ -50,6 +50,7 @@ impl Store {
                 ev.parent_seq.map(|v| v as i64),
                 ev.span_id as i64,
                 ev.ts_nanos.to_string(), // u128 → text to avoid rusqlite i64 limit
+                recv_nanos.to_string(),
                 kind,
                 method,
                 caller,
@@ -154,6 +155,7 @@ CREATE TABLE IF NOT EXISTS events (
     parent_seq INTEGER,
     span_id INTEGER NOT NULL,
     ts_nanos TEXT NOT NULL,
+    recv_nanos TEXT,
     kind TEXT NOT NULL,
     method TEXT,
     caller TEXT,
