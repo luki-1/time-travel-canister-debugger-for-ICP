@@ -17,6 +17,7 @@ examples assume you understand the earlier ones.
 cargo build --release -p ic-debug-cli
 npm --prefix agent-js install && npm --prefix agent-js run build
 npm --prefix ui install        && npm --prefix ui run build
+npm --prefix examples install   # @dfinity/agent + candid + principal
 
 icp network start -d
 # icp.yaml lives in examples/ — deploy from there

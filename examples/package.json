@@ -1,0 +1,12 @@
+{
+  "name": "ic-debug-examples",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Demo scripts that drive the four sample canisters and POST events to ic-debug record. Run from the repo root, e.g. `node examples/scripts/01-hello-trace.mjs`.",
+  "type": "module",
+  "dependencies": {
+    "@dfinity/agent": "^2.1.0",
+    "@dfinity/candid": "^2.1.0",
+    "@dfinity/principal": "^2.1.0"
+  }
+}

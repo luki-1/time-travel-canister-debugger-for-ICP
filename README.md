@@ -49,6 +49,7 @@ See [docs/GUIDE.md](docs/GUIDE.md) for a full walk-through.
 cargo build --release -p ic-debug-cli
 npm --prefix agent-js install && npm --prefix agent-js run build
 npm --prefix ui install        && npm --prefix ui run build
+npm --prefix examples install   # @dfinity/agent + candid + principal for the demo scripts
 
 # bring up a local replica + deploy the demo canisters
 icp network start -d

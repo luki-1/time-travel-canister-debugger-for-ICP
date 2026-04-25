@@ -16,14 +16,14 @@
 //      reason.
 //   4. The state panel shows payment.status stuck at "Locked" — the bug.
 //
-// Run:  node agent-js/examples/03-flag-an-error.mjs
+// Run:  node examples/scripts/03-flag-an-error.mjs
 
 import { HttpAgent, Actor } from "@dfinity/agent";
 import { IDL } from "@dfinity/candid";
 import { Principal } from "@dfinity/principal";
 import { readFileSync } from "node:fs";
 
-import { newTrace } from "../dist/index.js";
+import { newTrace } from "../../agent-js/dist/index.js";
 
 const RECORDER = "http://127.0.0.1:9191";
 const REPLICA  = "http://127.0.0.1:8000";

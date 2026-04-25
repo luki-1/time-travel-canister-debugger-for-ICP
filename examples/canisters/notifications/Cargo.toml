@@ -13,4 +13,4 @@ ic-cdk = { workspace = true }
 ic-cdk-macros = { workspace = true }
 candid = { workspace = true }
 serde = { workspace = true }
-ic-debug-trace = { path = "../../crates/ic-debug-trace", features = ["enabled"] }
+ic-debug-trace = { path = "../../../crates/ic-debug-trace", features = ["enabled"] }

@@ -34,14 +34,14 @@
 // The fix in the canister is one line in the `else` branch:
 //   trace_event!("ledger.transfer:failed");   // ← now auto-flagged
 //
-// Run:  node agent-js/examples/04-silent-error.mjs
+// Run:  node examples/scripts/04-silent-error.mjs
 
 import { HttpAgent, Actor } from "@dfinity/agent";
 import { IDL } from "@dfinity/candid";
 import { Principal } from "@dfinity/principal";
 import { readFileSync } from "node:fs";
 
-import { newTrace } from "../dist/index.js";
+import { newTrace } from "../../agent-js/dist/index.js";
 
 const RECORDER = "http://127.0.0.1:9191";
 const REPLICA  = "http://127.0.0.1:8000";

@@ -11,7 +11,7 @@
 // trace, pass the header, drain.
 //
 // Prereqs: `icp network start && icp deploy` + `ic-debug record` on :9191.
-// Run from repo root:   node agent-js/examples/01-hello-trace.mjs
+// Run from repo root:   node examples/scripts/01-hello-trace.mjs
 
 import { HttpAgent, Actor } from "@dfinity/agent";
 import { IDL } from "@dfinity/candid";
@@ -22,7 +22,7 @@ import { readFileSync } from "node:fs";
 // It registers a trace id with the recorder and returns a { id, header() }
 // handle. header() is what you pass as the first arg to any instrumented
 // canister method.
-import { newTrace } from "../dist/index.js";
+import { newTrace } from "../../agent-js/dist/index.js";
 
 const RECORDER = "http://127.0.0.1:9191";          // where `ic-debug record` listens
 const REPLICA  = "http://127.0.0.1:8000";          // local icp network

@@ -10,14 +10,14 @@
 // example is the draining loop at the end — every canister that might have
 // participated needs its buffer pulled.
 //
-// Run:  node agent-js/examples/02-multi-canister.mjs
+// Run:  node examples/scripts/02-multi-canister.mjs
 
 import { HttpAgent, Actor } from "@dfinity/agent";
 import { IDL } from "@dfinity/candid";
 import { Principal } from "@dfinity/principal";
 import { readFileSync } from "node:fs";
 
-import { newTrace } from "../dist/index.js";
+import { newTrace } from "../../agent-js/dist/index.js";
 
 const RECORDER = "http://127.0.0.1:9191";
 const REPLICA  = "http://127.0.0.1:8000";
