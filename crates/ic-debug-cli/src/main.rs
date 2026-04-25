@@ -2,6 +2,7 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 
 mod diff;
+mod instrument;
 mod recorder;
 mod replay;
 mod serve;
@@ -62,6 +63,42 @@ enum Cmd {
         #[arg(long)]
         json: bool,
     },
+    /// Walk a Rust source file and interactively suggest tracing edits
+    /// (`#[trace_method]`, `call_traced!`, `trace_event!`, `trace_state!`).
+    /// Detection is purely syntactic and held to a zero-false-positive
+    /// bar — see `docs/GUIDE.md` for the full list of rules and limits.
+    Instrument {
+        /// Path to a single .rs file, or a directory — directories are
+        /// walked recursively (skipping `target/`, `node_modules/`,
+        /// hidden dirs, build/dist) and every .rs file is processed.
+        path: std::path::PathBuf,
+        /// Print the candidate list and exit without prompting or
+        /// writing anything.
+        #[arg(long)]
+        dry_run: bool,
+        /// Skip prompts: emit the unified diff for every candidate to
+        /// stdout. Useful for scripted review; no file is modified.
+        #[arg(long)]
+        diff_only: bool,
+        /// Accept every candidate without prompting and write the file.
+        /// Rule 4 (snapshot a constructed local) uses the binding name
+        /// as the snapshot key. Use this only for scripted instrumentation
+        /// where you trust the rule set; otherwise prefer the interactive
+        /// flow which lets you see the source context for each suggestion.
+        #[arg(long)]
+        apply_all: bool,
+        /// Root directory for the agent-js post-step scan (only runs if
+        /// Rule 1b accepts a TraceHeader insertion). The post-step
+        /// looks for `<method>: IDL.Func([...])` and `<actor>.<method>(...)`
+        /// patterns and offers to splice in `Header,` / `trace.header(),`.
+        #[arg(long, default_value = "agent-js")]
+        agent_js_root: std::path::PathBuf,
+        /// Skip the agent-js post-step entirely. Default behaviour is
+        /// to run the scan only when the agent-js root exists *and* a
+        /// Rule 1b candidate was accepted.
+        #[arg(long)]
+        skip_agent_js: bool,
+    },
     /// Serve the web UI + JSON API over the trace store.
     Serve {
         #[arg(long, default_value = "traces/ic-debug.sqlite")]
@@ -108,5 +145,20 @@ async fn main() -> Result<()> {
             })
         }
         Cmd::Serve { store, port, ui_dir } => serve::run(&store, port, &ui_dir).await,
+        Cmd::Instrument {
+            path,
+            dry_run,
+            diff_only,
+            apply_all,
+            agent_js_root,
+            skip_agent_js,
+        } => instrument::run(instrument::Options {
+            path,
+            dry_run,
+            diff_only,
+            apply_all,
+            agent_js_root,
+            skip_agent_js,
+        }),
     }
 }
