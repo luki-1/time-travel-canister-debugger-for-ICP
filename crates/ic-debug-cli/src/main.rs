@@ -63,14 +63,19 @@ enum Cmd {
         #[arg(long)]
         json: bool,
     },
-    /// Walk a Rust source file and interactively suggest tracing edits
-    /// (`#[trace_method]`, `call_traced!`, `trace_event!`, `trace_state!`).
-    /// Detection is purely syntactic and held to a zero-false-positive
-    /// bar — see `docs/GUIDE.md` for the full list of rules and limits.
+    /// Walk Rust (`.rs`) or Motoko (`.mo`) source and interactively
+    /// suggest tracing edits — `#[trace_method]` / `call_traced!` /
+    /// `trace_event!` / `trace_state!` for Rust; the
+    /// `tracer.beginTrace` / `methodEntered` / `methodExited`
+    /// boilerplate plus `Trace.Tracer(...)` field and `__debug_drain`
+    /// query for Motoko. Detection is purely syntactic and held to a
+    /// zero-false-positive bar — see `docs/GUIDE.md` for the full
+    /// list of rules and limits.
     Instrument {
-        /// Path to a single .rs file, or a directory — directories are
-        /// walked recursively (skipping `target/`, `node_modules/`,
-        /// hidden dirs, build/dist) and every .rs file is processed.
+        /// Path to a single .rs / .mo file, or a directory —
+        /// directories are walked recursively (skipping `target/`,
+        /// `node_modules/`, hidden dirs, build/dist) and every .rs
+        /// and .mo file is processed.
         path: std::path::PathBuf,
         /// Print the candidate list and exit without prompting or
         /// writing anything.

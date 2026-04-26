@@ -67,7 +67,7 @@ await notifications.arm_failure();
 //    The canister emits a normal reject event; the UI recognises the
 //    reject kind and any `trace_event!` note whose label contains words
 //    like "fail", "reject", or "rollback".
-const trace = await newTrace(RECORDER, "example 3: flag an error");
+const trace = await newTrace(RECORDER, "example 3 (rust): flag an error");
 console.log(`trace id: ${trace.id}`);
 
 // Candid-level this looks like a successful call. At the IC level the
@@ -91,5 +91,5 @@ for (const [name, cid] of Object.entries(ids)) {
 }
 
 console.log(``);
-console.log(`→ open http://127.0.0.1:9192 → "example 3: flag an error"`);
+console.log(`→ open http://127.0.0.1:9192 → "example 3 (rust): flag an error"`);
 console.log(`  expect a red "⚠ 2 errors" pill; press \`n\` to cycle through them.`);

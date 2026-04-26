@@ -56,7 +56,7 @@ const escrow = Actor.createActor(escrowIdl, {
 });
 
 // 2. Start a trace. The label is what shows up in the UI's left rail.
-const trace = await newTrace(RECORDER, "example 1: hello trace");
+const trace = await newTrace(RECORDER, "example 1 (rust): hello trace");
 console.log(`trace id: ${trace.id}`);
 
 // 3. Make the traced call. The only ic-debug-specific bit is
@@ -85,4 +85,4 @@ await fetch(`${RECORDER}/drain`, {
 });
 
 console.log(`drained ${bytes.byteLength} bytes`);
-console.log(`→ open http://127.0.0.1:9192 and click "example 1: hello trace"`);
+console.log(`→ open http://127.0.0.1:9192 and click "example 1 (rust): hello trace"`);

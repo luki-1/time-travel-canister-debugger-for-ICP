@@ -52,7 +52,7 @@ await frontend.configure(
 );
 
 // 1. Start the trace, same as example 1.
-const trace = await newTrace(RECORDER, "example 2: multi-canister");
+const trace = await newTrace(RECORDER, "example 2 (rust): multi-canister");
 console.log(`trace id: ${trace.id}`);
 
 // 2. Make the call. Internally submit_payment uses call_traced! to hit

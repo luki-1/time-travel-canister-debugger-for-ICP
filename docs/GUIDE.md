@@ -128,20 +128,21 @@ remains the right way to understand *what* the instrumentation does.
 
 ### 2.0 Bootstrap with `ic-debug instrument` (the wizard)
 
-`ic-debug instrument <path>` walks one Rust file (or a directory) and
-asks, for each candidate site, whether to insert a tracing call. The
-output is plain Rust the wizard rewrites into the file in place.
-Detection is purely syntactic and held to a **zero false positives**
-bar — every prompt corresponds to an edit that produces valid Rust.
+`ic-debug instrument <path>` walks Rust (`.rs`) or Motoko (`.mo`)
+source — one file or a whole directory — and asks, for each candidate
+site, whether to insert a tracing call. The output is plain source the
+wizard rewrites into the file in place. Detection is purely syntactic
+and held to a **zero false positives** bar — every prompt corresponds
+to an edit that produces valid code.
 
 ```bash
 # Walk one file. The wizard prints each candidate with surrounding
 # context and asks accept / decline / skip-rest / quit.
 ic-debug instrument canisters/escrow/src/lib.rs
 
-# Walk a whole directory. Every .rs file is processed independently;
-# build dirs (target/, node_modules/, dist/, build/, hidden dirs) are
-# skipped automatically.
+# Walk a whole directory. Every .rs and .mo file is processed
+# independently; build dirs (target/, node_modules/, dist/, build/,
+# hidden dirs) are skipped automatically.
 ic-debug instrument canisters/
 
 # List candidates without writing or prompting (good first step).
@@ -171,6 +172,52 @@ correct; if it can't prove that, it stays silent.
 | **5**  | rollback-note              | a literal `return Err(...);` in a `Result`-returning `#[trace_method]`, **and** a `trace_state!` was already emitted earlier in the same block | inserts `trace_event!("<fn_name>:rollback");` on the line above |
 | **6**  | trap-note                  | a call to `ic_cdk::trap` or `ic_cdk::api::trap` inside a `#[trace_method]` body | inserts `trace_event!("<fn_name>:trapped");` on the line above |
 | **7**  | mutation-snapshot          | `<NAME>.with(\|x\| ... x.borrow_mut() ...)` inside a `#[trace_method]` body, where `<NAME>` is a `thread_local!` declared in the same file | prompts for key + value, then inserts `trace_state!(...)` after the `.with()` call |
+
+#### What the wizard suggests for Motoko (`.mo` files)
+
+Five rules — the Motoko `Trace` library has no macros, so each rule's
+edit is a few explicit `tracer.<method>(...)` lines instead of a
+single attribute. The wizard converges in three passes: bootstrap →
+wrap-method → notes.
+
+| # | Rule | Fires on | Insertion |
+|---|---|---|---|
+| **M1** | mo-bootstrap                | actor with no `tracer = Trace.Tracer(...)` field | inserts (whichever are missing) `import Trace`, the `transient let tracer = …` field, and a `public query func __debug_drain() : async Blob { tracer.drain() };` — all in one edit |
+| **M2** | mo-wrap-method              | `public … func <fn>(header : ?Trace.TraceHeader, …) : …` whose body contains no `tracer.beginTrace(` | inserts `tracer.beginTrace(header) / methodEntered(...) / methodExited(null)` boilerplate, placing `methodExited` *before* any trailing return expression |
+| **M3** | mo-wrap-method-insert-header | `public ` write `func <fn>(...)` with no `?Trace.TraceHeader` first param (queries excluded; `__debug_drain` excluded) | also splices `header : ?Trace.TraceHeader` into the parameter list — **breaking ABI change**, agent-js callers re-scanned afterwards |
+| **M4** | mo-entry-note               | function body has `tracer.methodEntered(...)` but no `tracer.note("…:enter")` near the top | inserts `tracer.note("<fn>:enter");` right after `methodEntered(...)` |
+| **M5** | mo-trap-note                | `Debug.trap(...)` inside a body that already has `tracer.beginTrace(`, with no `:trapped` note on the previous line | inserts `tracer.note("<fn>:trapped");` on the line above the trap |
+
+The rules also cooperate with the Rust agent-js post-step: when an
+**M3** candidate is accepted, the wizard offers to update matching
+`<actor>.<method>(...)` and `<method>: IDL.Func([...])` patterns under
+`agent-js/` so JS callers stay in sync, the same as for Rust Rule 1b.
+
+##### Path resolution for `import Trace`
+
+The bootstrap rule needs to know the relative path from the canister
+file to `motoko/src/Trace.mo`. The wizard walks the directory tree
+upwards from the canister, looking for that file as a sibling. If
+found, it emits e.g. `import Trace "../../../motoko/src/Trace";`. If
+nothing is found within ten levels, it emits a placeholder with a
+`/* TODO: fix import path */` comment so the diff makes the failure
+obvious.
+
+##### Limits
+
+- The wizard never converts inter-canister calls. Motoko `actor`
+  references look like ordinary method calls (`escrowActor.lock_funds(…)`),
+  and there's no syntactic difference between an instrumented call and
+  a non-instrumented one — the user inserts `tracer.callSpawned(…)` /
+  `tracer.callReturned(…)` by hand.
+- No mutation-snapshot or rollback-note rule. Both would need a real
+  Motoko parser to keep the false-positive rate at zero, and we don't
+  have one. Add `tracer.snapshotText(...)` calls by hand.
+- The wizard assumes a tracer alias of `Trace` for the bootstrap
+  insertion. If you import the module under a different alias, the
+  wizard recognises it on subsequent runs (it picks up whatever
+  `<alias>.Tracer(` you've used) but bootstrap itself always emits
+  `import Trace "..."`.
 
 #### What it deliberately does **not** detect
 
@@ -421,11 +468,14 @@ static UI bundle — so this is also what you browse from Chrome.
 
 ### `ic-debug instrument`
 
-Interactive setup wizard. Walks Rust source for canister code and
-inserts `#[trace_method]`, `call_traced!`, `trace_event!`, and
-`trace_state!` calls in place. Detection is held to a zero
-false-positive bar; see [section 2.0](#20-bootstrap-with-ic-debug-instrument-the-wizard)
-for the full rule list and the limits.
+Interactive setup wizard. Walks Rust *and* Motoko source for canister
+code and inserts the appropriate trace calls in place — `#[trace_method]`,
+`call_traced!`, `trace_event!`, `trace_state!` for `.rs`; the
+`tracer.beginTrace` / `methodEntered` / `methodExited` boilerplate plus
+`Trace.Tracer(...)` field and `__debug_drain` query for `.mo`. Detection
+is held to a zero false-positive bar; see
+[section 2.0](#20-bootstrap-with-ic-debug-instrument-the-wizard) for the
+full rule list and the limits.
 
 ```bash
 ic-debug instrument <path>                            # interactive on file or directory
@@ -438,9 +488,9 @@ ic-debug instrument <path>                            # interactive on file or d
 
 Behaviour notes:
 
-- `<path>` is a `.rs` file *or* a directory. Directories are walked
-  recursively; `target/`, `node_modules/`, `dist/`, `build/`, and
-  hidden folders are skipped.
+- `<path>` is a `.rs` or `.mo` file *or* a directory. Directories are
+  walked recursively; `target/`, `node_modules/`, `dist/`, `build/`,
+  and hidden folders are skipped.
 - The interactive flow prompts for each candidate and shows ~3 lines
   of source context. Rules 4 and 7 ask additionally for a snapshot
   key (and Rule 7 for a value expression).

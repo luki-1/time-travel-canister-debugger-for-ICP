@@ -44,9 +44,6 @@ use crate::{diff, replay};
 #[derive(Clone)]
 struct AppState {
     db_path: Arc<String>,
-    /// Names loaded from icp mapping files at startup. Principal → name.
-    /// Treated as read-only defaults; user overrides live in SQLite.
-    default_names: Arc<BTreeMap<String, String>>,
 }
 
 pub async fn run(store_path: &str, port: u16, ui_dir: &str) -> Result<()> {
@@ -59,14 +56,8 @@ pub async fn run(store_path: &str, port: u16, ui_dir: &str) -> Result<()> {
         .execute_batch(CANISTER_NAMES_SCHEMA)
         .context("ensure canister_names table")?;
 
-    let default_names = load_default_names();
-    if !default_names.is_empty() {
-        info!(count = default_names.len(), "loaded canister name defaults");
-    }
-
     let state = AppState {
         db_path: Arc::new(store_path.to_string()),
-        default_names: Arc::new(default_names),
     };
 
     let api = Router::new()
@@ -216,8 +207,9 @@ struct RenameBody {
 }
 
 /// Walk likely mapping file locations and fold everything into one map.
-/// Errors are logged and swallowed — names are optional polish, the UI
-/// still works when nothing is found.
+/// Re-read on every `GET /api/canisters` so newly-deployed canisters show up
+/// without restarting the serve. Errors are logged and swallowed — names are
+/// optional polish, the UI still works when nothing is found.
 fn load_default_names() -> BTreeMap<String, String> {
     let mut out = BTreeMap::new();
     let candidates = [
@@ -257,13 +249,14 @@ async fn list_canisters(State(s): State<AppState>) -> Result<impl IntoResponse, 
         .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?
         .collect::<std::result::Result<_, _>>()?;
 
+    let default_names = load_default_names();
     let mut out: Vec<CanisterNameRow> = Vec::new();
     let mut seen = std::collections::BTreeSet::new();
 
     // Overrides first — they take precedence and may exist for principals
     // not in the mapping files (e.g. the user pasted an arbitrary id).
     for (principal, name) in &overrides {
-        let default_name = s.default_names.get(principal).cloned();
+        let default_name = default_names.get(principal).cloned();
         out.push(CanisterNameRow {
             principal: principal.clone(),
             name: name.clone(),
@@ -272,7 +265,7 @@ async fn list_canisters(State(s): State<AppState>) -> Result<impl IntoResponse, 
         });
         seen.insert(principal.clone());
     }
-    for (principal, name) in s.default_names.as_ref() {
+    for (principal, name) in &default_names {
         if seen.contains(principal) {
             continue;
         }
@@ -305,7 +298,7 @@ async fn put_canister_name(
         "principal": principal,
         "name": trimmed,
         "source": "override",
-        "default_name": s.default_names.get(&principal),
+        "default_name": load_default_names().get(&principal),
     })))
 }
 
@@ -320,7 +313,7 @@ async fn delete_canister_name(
     )?;
     // Report the effective state after the delete so the UI can update
     // without refetching — it's either the default or nothing.
-    let default_name = s.default_names.get(&principal).cloned();
+    let default_name = load_default_names().get(&principal).cloned();
     Ok(Json(serde_json::json!({
         "principal": principal,
         "name": default_name,

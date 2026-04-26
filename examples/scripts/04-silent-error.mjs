@@ -66,7 +66,7 @@ const ledger = Actor.createActor(ledgerIdl, {
   canisterId: Principal.fromText(ids.ledger),
 });
 
-const trace = await newTrace(RECORDER, "example 4: silent error");
+const trace = await newTrace(RECORDER, "example 4 (rust): silent error");
 console.log(`trace id: ${trace.id}`);
 
 // Unique per-run suffix so repeat runs don't accumulate on the same accounts.
@@ -99,7 +99,7 @@ await fetch(`${RECORDER}/drain`, {
 });
 console.log(`drained ${bytes.byteLength} bytes`);
 console.log(``);
-console.log(`→ open http://127.0.0.1:9192 → "example 4: silent error"`);
+console.log(`→ open http://127.0.0.1:9192 → "example 4 (rust): silent error"`);
 console.log(`  no ⚠ pill, no red rows — the transfer looks like it worked.`);
 console.log(`  step to the second EXIT and check the state panel:`);
 console.log(`  account/${alice} is still 50, account/${bob} was never created.`);

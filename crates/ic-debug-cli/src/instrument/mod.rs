@@ -15,6 +15,7 @@ mod agent_js;
 mod detect;
 mod diff;
 mod edit;
+mod motoko;
 mod parse;
 mod prompt;
 
@@ -67,6 +68,24 @@ pub enum Rule {
     MutationSnapshot,
     RollbackNote,
     TrapNote,
+    // ---- Motoko rules ----
+    /// Insert `import Trace`, the `tracer` field, and `__debug_drain`
+    /// query in an actor that has none of them yet.
+    MoBootstrap,
+    /// Insert `tracer.beginTrace(header) / methodEntered / methodExited`
+    /// boilerplate in a public method that already takes
+    /// `header : ?<alias>.TraceHeader` as its first parameter.
+    MoWrapMethod,
+    /// Like MoWrapMethod, but the method has no `?TraceHeader` first
+    /// parameter — the wizard inserts both the parameter and the body
+    /// boilerplate. Breaking ABI change; warned about at the prompt.
+    MoWrapMethodInsertHeader,
+    /// Insert `tracer.note("<fn>:enter")` after `methodEntered` when
+    /// no entry note is present near the top of the body.
+    MoEntryNote,
+    /// Insert `tracer.note("<fn>:trapped")` before a `Debug.trap(...)`
+    /// call inside a traced method body.
+    MoTrapNote,
 }
 
 impl Rule {
@@ -80,6 +99,11 @@ impl Rule {
             Rule::MutationSnapshot => "mutation-snapshot",
             Rule::RollbackNote => "rollback-note",
             Rule::TrapNote => "trap-note",
+            Rule::MoBootstrap => "mo-bootstrap",
+            Rule::MoWrapMethod => "mo-wrap-method",
+            Rule::MoWrapMethodInsertHeader => "mo-wrap-method-insert-header",
+            Rule::MoEntryNote => "mo-entry-note",
+            Rule::MoTrapNote => "mo-trap-note",
         }
     }
 }
@@ -119,15 +143,15 @@ pub fn run(opts: Options) -> Result<()> {
     run_one_file(&opts.path, &opts)
 }
 
-/// Walk a directory recursively and run the wizard on every `.rs` file
-/// (skipping the usual build/VCS noise). Each file is handled
-/// independently — a `--dry-run` aggregates findings across files; an
-/// `--apply-all` rewrites them in place; the interactive flow prompts
-/// per file in source order.
+/// Walk a directory recursively and run the wizard on every supported
+/// source file (`.rs` + `.mo`), skipping the usual build/VCS noise.
+/// Each file is handled independently — a `--dry-run` aggregates
+/// findings across files; an `--apply-all` rewrites them in place; the
+/// interactive flow prompts per file in source order.
 fn run_directory(opts: &Options) -> Result<()> {
-    let files = collect_rust_files(&opts.path)?;
+    let files = collect_source_files(&opts.path)?;
     if files.is_empty() {
-        println!("no .rs files under {}", opts.path.display());
+        println!("no .rs or .mo files under {}", opts.path.display());
         return Ok(());
     }
     println!("instrumenting {} file(s) under {}", files.len(), opts.path.display());
@@ -139,7 +163,7 @@ fn run_directory(opts: &Options) -> Result<()> {
     Ok(())
 }
 
-fn collect_rust_files(root: &Path) -> Result<Vec<PathBuf>> {
+fn collect_source_files(root: &Path) -> Result<Vec<PathBuf>> {
     let mut out = Vec::new();
     walk(root, &mut out)?;
     out.sort();
@@ -164,7 +188,10 @@ fn walk(dir: &Path, out: &mut Vec<PathBuf>) -> Result<()> {
                 continue;
             }
             walk(&path, out)?;
-        } else if path.extension().and_then(|e| e.to_str()) == Some("rs") {
+        } else if matches!(
+            path.extension().and_then(|e| e.to_str()),
+            Some("rs") | Some("mo")
+        ) {
             out.push(path);
         }
     }
@@ -172,12 +199,19 @@ fn walk(dir: &Path, out: &mut Vec<PathBuf>) -> Result<()> {
 }
 
 fn run_one_file(path: &Path, opts: &Options) -> Result<()> {
+    let ext = path.extension().and_then(|e| e.to_str());
     let src = fs::read_to_string(path)
         .with_context(|| format!("read {}", path.display()))?;
-    let file = syn::parse_file(&src)
-        .with_context(|| format!("parse {} as Rust", path.display()))?;
-    let aliases = parse::collect_aliases(&file);
-    let candidates = detect::all(&file, &src, &aliases);
+    let candidates = match ext {
+        Some("rs") => {
+            let file = syn::parse_file(&src)
+                .with_context(|| format!("parse {} as Rust", path.display()))?;
+            let aliases = parse::collect_aliases(&file);
+            detect::all(&file, &src, &aliases)
+        }
+        Some("mo") => motoko::detect(&src, path),
+        _ => Vec::new(),
+    };
 
     if candidates.is_empty() {
         if !opts.diff_only {
@@ -237,9 +271,16 @@ fn run_one_file(path: &Path, opts: &Options) -> Result<()> {
 }
 
 fn run_agent_js_post(accepted: &[Candidate], opts: &Options) -> Result<()> {
+    // Both the Rust and Motoko "insert TraceHeader" rules change the
+    // canister ABI; the agent-js scan is the same for either.
     let methods: Vec<&str> = accepted
         .iter()
-        .filter(|c| c.rule == Rule::WrapMethodInsertHeader)
+        .filter(|c| {
+            matches!(
+                c.rule,
+                Rule::WrapMethodInsertHeader | Rule::MoWrapMethodInsertHeader
+            )
+        })
         .map(|c| c.fn_name.as_str())
         .collect();
     if methods.is_empty() {

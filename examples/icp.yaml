@@ -23,6 +23,30 @@ canisters:
       configuration:
         package: ledger
 
+  - name: motoko_escrow
+    recipe:
+      type: "@dfinity/motoko@v4.1.0"
+      configuration:
+        main: canisters/motoko_escrow/src/main.mo
+
+  - name: motoko_notifications
+    recipe:
+      type: "@dfinity/motoko@v4.1.0"
+      configuration:
+        main: canisters/motoko_notifications/src/main.mo
+
+  - name: motoko_ledger
+    recipe:
+      type: "@dfinity/motoko@v4.1.0"
+      configuration:
+        main: canisters/motoko_ledger/src/main.mo
+
+  - name: motoko_frontend_api
+    recipe:
+      type: "@dfinity/motoko@v4.1.0"
+      configuration:
+        main: canisters/motoko_frontend_api/src/main.mo
+
   - name: ui
     recipe:
       type: "@dfinity/asset-canister@v2.1.0"

@@ -14,9 +14,16 @@ const REPLICA  = process.env.IC_HOST ?? "http://127.0.0.1:8000";
 const MAPPING_PATH = process.env.IDS_PATH ?? ".icp/cache/mappings/local.ids.json";
 const mapping = JSON.parse(readFileSync(MAPPING_PATH, "utf8"));
 const CANISTERS = {
-  escrow:        process.env.ESCROW        ?? mapping.escrow,
-  notifications: process.env.NOTIFICATIONS ?? mapping.notifications,
-  frontend_api:  process.env.FRONTEND_API  ?? mapping.frontend_api,
+  // Rust pipeline
+  escrow:               process.env.ESCROW               ?? mapping.escrow,
+  notifications:        process.env.NOTIFICATIONS        ?? mapping.notifications,
+  ledger:               process.env.LEDGER               ?? mapping.ledger,
+  frontend_api:         process.env.FRONTEND_API         ?? mapping.frontend_api,
+  // Motoko pipeline
+  motoko_escrow:        process.env.MOTOKO_ESCROW        ?? mapping.motoko_escrow,
+  motoko_notifications: process.env.MOTOKO_NOTIFICATIONS ?? mapping.motoko_notifications,
+  motoko_ledger:        process.env.MOTOKO_LEDGER        ?? mapping.motoko_ledger,
+  motoko_frontend_api:  process.env.MOTOKO_FRONTEND_API  ?? mapping.motoko_frontend_api,
 };
 
 const idl = ({ IDL }) =>
@@ -28,6 +35,10 @@ const agent = await HttpAgent.create({ host: REPLICA, shouldFetchRootKey: true }
 
 let total = 0;
 for (const [name, cid] of Object.entries(CANISTERS)) {
+  if (!cid) {
+    console.log(`[${name}] no canister id — skipped`);
+    continue;
+  }
   const actor = Actor.createActor(idl, { agent, canisterId: Principal.fromText(cid) });
   const blob = await actor.__debug_drain();
   const bytes = blob instanceof Uint8Array ? blob : Uint8Array.from(blob);
