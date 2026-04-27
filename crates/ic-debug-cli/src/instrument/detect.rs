@@ -27,16 +27,22 @@ use syn::{
 use super::parse::{path_matches, type_ends_with, AliasMap};
 use super::{Candidate, Replacement, Rule};
 
-const CDK_ENTRY_ATTRS: &[&str] = &["update", "query", "heartbeat", "inspect_message"];
+const CDK_ENTRY_ATTRS: &[&str] = &[
+    "update", "query", "heartbeat", "inspect_message", "init", "post_upgrade",
+];
 const CDK_ENTRY_PATHS: &[&str] = &[
     "ic_cdk::update",
     "ic_cdk::query",
     "ic_cdk::heartbeat",
     "ic_cdk::inspect_message",
+    "ic_cdk::init",
+    "ic_cdk::post_upgrade",
     "ic_cdk_macros::update",
     "ic_cdk_macros::query",
     "ic_cdk_macros::heartbeat",
     "ic_cdk_macros::inspect_message",
+    "ic_cdk_macros::init",
+    "ic_cdk_macros::post_upgrade",
 ];
 
 const TRACE_METHOD_PATHS: &[&str] = &[
@@ -156,6 +162,7 @@ fn scan_fn(
             containers,
             src,
         },
+        false, // ancestor_state_traced — starts at false at function entry
         out,
     );
 }
@@ -291,8 +298,14 @@ fn stmt_is_trace_event_enter(stmt: &Stmt) -> bool {
 
 // ---------- Body walker ----------
 
-fn scan_block(b: &Block, ctx: &Ctx<'_>, out: &mut Vec<Candidate>) {
-    let mut state_traced_in_block = false;
+// `ancestor_state_traced` is true when an outer block (ancestor in the
+// same function) has already emitted a `trace_state!`. This lets Rule 5
+// fire on the common pattern `trace_state!(…); if cond { return Err(…) }`
+// where the return is inside a nested block. Closures and async blocks
+// intentionally do NOT propagate the flag — those bodies are already
+// excluded from scanning by `scan_expr`.
+fn scan_block(b: &Block, ctx: &Ctx<'_>, ancestor_state_traced: bool, out: &mut Vec<Candidate>) {
+    let mut state_traced_in_block = ancestor_state_traced;
 
     for (idx, stmt) in b.stmts.iter().enumerate() {
         // Rule 5 precondition: track whether a trace_state! has appeared.
@@ -321,24 +334,24 @@ fn scan_block(b: &Block, ctx: &Ctx<'_>, out: &mut Vec<Candidate>) {
 
         // Walk the expression for Rules 2 (call) and 6 (trap), and
         // recurse into nested blocks (if/match/while/for/loop bodies).
-        scan_stmt_exprs(stmt, ctx, out);
+        scan_stmt_exprs(stmt, ctx, state_traced_in_block, out);
     }
 }
 
-fn scan_stmt_exprs(stmt: &Stmt, ctx: &Ctx<'_>, out: &mut Vec<Candidate>) {
+fn scan_stmt_exprs(stmt: &Stmt, ctx: &Ctx<'_>, state_traced: bool, out: &mut Vec<Candidate>) {
     match stmt {
         Stmt::Local(l) => {
             if let Some(init) = &l.init {
-                scan_expr(&init.expr, ctx, out);
+                scan_expr(&init.expr, ctx, state_traced, out);
             }
         }
-        Stmt::Expr(e, _) => scan_expr(e, ctx, out),
+        Stmt::Expr(e, _) => scan_expr(e, ctx, state_traced, out),
         Stmt::Macro(_) => {} // skip — we don't recurse through macro bodies
         Stmt::Item(_) => {}  // skip nested item defs
     }
 }
 
-fn scan_expr(e: &Expr, ctx: &Ctx<'_>, out: &mut Vec<Candidate>) {
+fn scan_expr(e: &Expr, ctx: &Ctx<'_>, state_traced: bool, out: &mut Vec<Candidate>) {
     // Rules 2 + 6: direct call expressions.
     if let Expr::Call(call) = e {
         if let Some(c) = rule_convert_call(call, ctx) {
@@ -354,72 +367,74 @@ fn scan_expr(e: &Expr, ctx: &Ctx<'_>, out: &mut Vec<Candidate>) {
     // closure body would fire at unexpected times. For zero false
     // positives we simply don't look there.
     match e {
-        Expr::Block(b) => scan_block(&b.block, ctx, out),
+        Expr::Block(b) => scan_block(&b.block, ctx, state_traced, out),
         Expr::If(i) => {
-            scan_expr(&i.cond, ctx, out);
-            scan_block(&i.then_branch, ctx, out);
+            scan_expr(&i.cond, ctx, state_traced, out);
+            scan_block(&i.then_branch, ctx, state_traced, out);
             if let Some((_, else_branch)) = &i.else_branch {
-                scan_expr(else_branch, ctx, out);
+                scan_expr(else_branch, ctx, state_traced, out);
             }
         }
         Expr::Match(m) => {
-            scan_expr(&m.expr, ctx, out);
+            scan_expr(&m.expr, ctx, state_traced, out);
             for arm in &m.arms {
                 if let Some((_, guard)) = &arm.guard {
-                    scan_expr(guard, ctx, out);
+                    scan_expr(guard, ctx, state_traced, out);
                 }
-                scan_expr(&arm.body, ctx, out);
+                scan_expr(&arm.body, ctx, state_traced, out);
             }
         }
         Expr::While(w) => {
-            scan_expr(&w.cond, ctx, out);
-            scan_block(&w.body, ctx, out);
+            scan_expr(&w.cond, ctx, state_traced, out);
+            scan_block(&w.body, ctx, state_traced, out);
         }
         Expr::ForLoop(f) => {
-            scan_expr(&f.expr, ctx, out);
-            scan_block(&f.body, ctx, out);
+            scan_expr(&f.expr, ctx, state_traced, out);
+            scan_block(&f.body, ctx, state_traced, out);
         }
-        Expr::Loop(l) => scan_block(&l.body, ctx, out),
-        Expr::Unsafe(u) => scan_block(&u.block, ctx, out),
+        Expr::Loop(l) => scan_block(&l.body, ctx, state_traced, out),
+        Expr::Unsafe(u) => scan_block(&u.block, ctx, state_traced, out),
         Expr::Return(r) => {
             if let Some(v) = &r.expr {
-                scan_expr(v, ctx, out);
+                scan_expr(v, ctx, state_traced, out);
             }
         }
-        Expr::Try(t) => scan_expr(&t.expr, ctx, out),
-        Expr::Await(a) => scan_expr(&a.base, ctx, out),
+        Expr::Try(t) => scan_expr(&t.expr, ctx, state_traced, out),
+        Expr::Await(a) => scan_expr(&a.base, ctx, state_traced, out),
         Expr::MethodCall(m) => {
-            scan_expr(&m.receiver, ctx, out);
+            scan_expr(&m.receiver, ctx, state_traced, out);
             for arg in &m.args {
-                scan_expr(arg, ctx, out);
+                scan_expr(arg, ctx, state_traced, out);
             }
         }
         Expr::Call(c) => {
-            scan_expr(&c.func, ctx, out);
+            scan_expr(&c.func, ctx, state_traced, out);
             for arg in &c.args {
-                scan_expr(arg, ctx, out);
+                scan_expr(arg, ctx, state_traced, out);
             }
         }
         Expr::Binary(b) => {
-            scan_expr(&b.left, ctx, out);
-            scan_expr(&b.right, ctx, out);
+            scan_expr(&b.left, ctx, state_traced, out);
+            scan_expr(&b.right, ctx, state_traced, out);
         }
-        Expr::Unary(u) => scan_expr(&u.expr, ctx, out),
-        Expr::Let(l) => scan_expr(&l.expr, ctx, out),
-        Expr::Reference(r) => scan_expr(&r.expr, ctx, out),
+        Expr::Unary(u) => scan_expr(&u.expr, ctx, state_traced, out),
+        Expr::Let(l) => scan_expr(&l.expr, ctx, state_traced, out),
+        Expr::Reference(r) => scan_expr(&r.expr, ctx, state_traced, out),
         Expr::Tuple(t) => {
             for el in &t.elems {
-                scan_expr(el, ctx, out);
+                scan_expr(el, ctx, state_traced, out);
             }
         }
         Expr::Array(a) => {
             for el in &a.elems {
-                scan_expr(el, ctx, out);
+                scan_expr(el, ctx, state_traced, out);
             }
         }
-        Expr::Paren(p) => scan_expr(&p.expr, ctx, out),
-        // Expr::Closure intentionally skipped.
-        // Expr::Async intentionally skipped.
+        Expr::Paren(p) => scan_expr(&p.expr, ctx, state_traced, out),
+        // Expr::Closure intentionally skipped — trace_event! inside a
+        // closure fires at unpredictable times. Closures also reset the
+        // state_traced ancestry since they have independent execution order.
+        // Expr::Async intentionally skipped for the same reason.
         _ => {}
     }
 }

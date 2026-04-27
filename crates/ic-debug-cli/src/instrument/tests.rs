@@ -573,6 +573,107 @@ fn mo_rule_7_skips_local_shadow_of_actor_var() {
     assert!(!rules.contains(&Rule::MoMutationSnapshot), "got {:?}", rules);
 }
 
+// ---------- Rule 1b: init / post_upgrade coverage ----------
+
+#[test]
+fn rule_1b_fires_on_init_without_trace_header() {
+    let src = r#"
+#[init]
+fn canister_init() {}
+"#;
+    let rules = detect_rules(src);
+    assert!(rules.contains(&Rule::WrapMethodInsertHeader), "got {:?}", rules);
+}
+
+#[test]
+fn rule_1b_fires_on_post_upgrade_without_trace_header() {
+    let src = r#"
+#[post_upgrade]
+fn canister_post_upgrade() {}
+"#;
+    let rules = detect_rules(src);
+    assert!(rules.contains(&Rule::WrapMethodInsertHeader), "got {:?}", rules);
+}
+
+#[test]
+fn rule_1_fires_on_init_with_trace_header() {
+    let src = r#"
+#[init]
+fn canister_init(header: TraceHeader) {}
+"#;
+    let rules = detect_rules(src);
+    assert!(rules.contains(&Rule::WrapMethod), "got {:?}", rules);
+}
+
+// ---------- Rule 5: nested-block state propagation ----------
+
+#[test]
+fn rule_5_fires_on_return_err_inside_if_block() {
+    // The most common real-world shape: trace_state! at function level,
+    // then return Err inside an if body.
+    let src = r#"
+#[trace_method]
+fn lock(header: TraceHeader) -> Result<u64, String> {
+    let payment = Payment { id: 1 };
+    trace_state!("payment", &payment);
+    if !ok {
+        return Err("bad".to_string());
+    }
+    Ok(1)
+}
+"#;
+    let rules = detect_rules(src);
+    assert!(rules.contains(&Rule::RollbackNote), "got {:?}", rules);
+}
+
+#[test]
+fn rule_5_fires_on_return_err_inside_match_arm_block() {
+    // Match arm with a braced body — the return Err is a Stmt inside a
+    // Block, so the propagated state_traced flag reaches it.
+    let src = r#"
+#[trace_method]
+fn lock(header: TraceHeader) -> Result<u64, String> {
+    let payment = Payment { id: 1 };
+    trace_state!("payment", &payment);
+    match something {
+        Some(x) => Ok(x),
+        None => {
+            return Err("missing".to_string());
+        }
+    }
+}
+"#;
+    let rules = detect_rules(src);
+    assert!(rules.contains(&Rule::RollbackNote), "got {:?}", rules);
+}
+
+#[test]
+fn rule_5_does_not_fire_when_state_is_inside_nested_block_only() {
+    // trace_state! is INSIDE the if block, so a return Err OUTSIDE it
+    // at function level (before trace_state!) must not fire.
+    let src = r#"
+#[trace_method]
+fn lock(header: TraceHeader) -> Result<u64, String> {
+    if false {
+        let p = Payment { id: 1 };
+        trace_state!("p", &p);
+    }
+    return Err("nope".to_string());
+}
+"#;
+    // state_traced propagates *down* into nested blocks, not *up* back to
+    // the parent. So the return Err at function level, which comes before
+    // the if block containing trace_state!, must not see it as "traced".
+    // (Whether it fires depends on source order; in this fixture the
+    // return Err is at function level AFTER the if block in source order —
+    // scan_block processes stmts in order, so after the if we recurse
+    // into it and set state_traced=true in the child, but the parent's
+    // local flag only sees trace_state! stmts at its own level. So this
+    // return Err should not fire.)
+    let rules = detect_rules(src);
+    assert!(!rules.contains(&Rule::RollbackNote), "got {:?}", rules);
+}
+
 // ---------- Idempotency ----------
 
 #[test]
