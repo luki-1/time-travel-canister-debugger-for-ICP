@@ -187,6 +187,8 @@ wrap-method → notes.
 | **M3** | mo-wrap-method-insert-header | `public ` write `func <fn>(...)` with no `?Trace.TraceHeader` first param (queries excluded; `__debug_drain` excluded) | also splices `header : ?Trace.TraceHeader` into the parameter list — **breaking ABI change**, agent-js callers re-scanned afterwards |
 | **M4** | mo-entry-note               | function body has `tracer.methodEntered(...)` but no `tracer.note("…:enter")` near the top | inserts `tracer.note("<fn>:enter");` right after `methodEntered(...)` |
 | **M5** | mo-trap-note                | `Debug.trap(...)` inside a body that already has `tracer.beginTrace(`, with no `:trapped` note on the previous line | inserts `tracer.note("<fn>:trapped");` on the line above the trap |
+| **M6** | mo-rollback-note            | `throw` expression inside a body that already has `tracer.beginTrace(`, with no `:rollback` note on the previous line | inserts `tracer.note("<fn>:rollback");` on the line above the throw |
+| **M7** | mo-mutation-snapshot        | actor-level `var x :=` assignment inside a traced body, where `x` is declared at actor scope (not a local shadow), with no `snapshotText`/`snapshotBlob` in the next 5 lines — bare ident LHS only (no `r.field :=` or `arr[i] :=`) | prompts for a key, then inserts `tracer.snapshotText("<key>", debug_show x);` after the assignment |
 
 The rules also cooperate with the Rust agent-js post-step: when an
 **M3** candidate is accepted, the wizard offers to update matching
@@ -210,9 +212,11 @@ obvious.
   and there's no syntactic difference between an instrumented call and
   a non-instrumented one — the user inserts `tracer.callSpawned(…)` /
   `tracer.callReturned(…)` by hand.
-- No mutation-snapshot or rollback-note rule. Both would need a real
-  Motoko parser to keep the false-positive rate at zero, and we don't
-  have one. Add `tracer.snapshotText(...)` calls by hand.
+- Rule M7 (mutation-snapshot) only fires on bare-ident LHS assignments
+  (`x := expr`). Record field updates (`r.field := expr`) and array
+  element updates (`arr[i] := expr`) are silently skipped. It also only
+  fires when the var is declared at actor scope in the same file — cross-
+  file state and `stable var` fields in separate modules are out of scope.
 - The wizard assumes a tracer alias of `Trace` for the bootstrap
   insertion. If you import the module under a different alias, the
   wizard recognises it on subsequent runs (it picks up whatever
