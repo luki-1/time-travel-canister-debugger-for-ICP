@@ -21,6 +21,14 @@
 //!   5. mo-trap-note                   — `Debug.trap(...)` inside a
 //!                                       traced body, no preceding
 //!                                       `tracer.note(":trapped")`.
+//!   6. mo-rollback-note               — `throw` inside a traced body,
+//!                                       no preceding
+//!                                       `tracer.note(":rollback")`.
+//!   7. mo-mutation-snapshot           — actor-level `var x :=` inside a
+//!                                       traced body with no following
+//!                                       snapshot. Suggests
+//!                                       `tracer.snapshotText(key,
+//!                                       debug_show x)`.
 //!
 //! Parsing strategy: Motoko has no Rust-grade parser available, so we
 //! do a careful character scan that tracks string/comment state and
@@ -58,6 +66,16 @@ pub fn detect(src: &str, path: &Path) -> Vec<Candidate> {
         }
         for trap in &f.trap_calls {
             if let Some(c) = rule_trap_note(f, trap, src) {
+                out.push(c);
+            }
+        }
+        for throw in &f.throw_sites {
+            if let Some(c) = rule_rollback_note(f, throw, &info, src) {
+                out.push(c);
+            }
+        }
+        for mutation in &f.mutation_sites {
+            if let Some(c) = rule_mutation_snapshot(f, mutation, &info, src) {
                 out.push(c);
             }
         }
@@ -132,11 +150,30 @@ struct PubFunc {
     has_entry_note: bool,
     /// `Debug.trap(...)` calls found inside this function's body.
     trap_calls: Vec<TrapCall>,
+    /// `throw` expressions found inside this function's body.
+    throw_sites: Vec<ThrowSite>,
+    /// Actor-level `var x :=` assignments found inside this function's body.
+    mutation_sites: Vec<MutationSite>,
 }
 
 struct TrapCall {
     /// Byte offset of the `D` in `Debug.trap`.
     start: usize,
+}
+
+struct ThrowSite {
+    /// Byte offset of the `t` in `throw`.
+    start: usize,
+}
+
+struct MutationSite {
+    /// Name of the actor-level var being assigned.
+    ident: String,
+    /// Byte offset right after the `;` ending the assignment statement.
+    stmt_end: usize,
+    /// Byte offset of the first character on the line containing the
+    /// assignment (used to derive indentation for the inserted snapshot).
+    assign_line_start: usize,
 }
 
 fn parse(src: &str) -> Option<ActorInfo> {
@@ -158,7 +195,9 @@ fn parse(src: &str) -> Option<ActorInfo> {
 
     let (has_tracer_field, tracer_ident) = find_tracer_field(body_str, &trace_alias);
     let has_drain = body_str.contains("func __debug_drain");
-    let funcs = find_public_funcs(body_str, body_offset, &trace_alias, &tracer_ident);
+    let body_mask = skip_mask(body_str);
+    let actor_vars = find_actor_vars(body_str, &body_mask);
+    let funcs = find_public_funcs(body_str, body_offset, &trace_alias, &tracer_ident, &actor_vars);
 
     Some(ActorInfo {
         insert_after_open: actor_body.start,
@@ -402,6 +441,7 @@ fn find_public_funcs(
     body_offset: usize,
     trace_alias: &str,
     tracer_ident: &str,
+    actor_vars: &[String],
 ) -> Vec<PubFunc> {
     let mask = skip_mask(body);
     let mut out = Vec::new();
@@ -510,6 +550,9 @@ fn find_public_funcs(
         let has_entry_note = body_has_entry_note(body_str, &body_mask, tracer_ident);
 
         let trap_calls = find_trap_calls(body_str, &body_mask, body_offset + body_open + 1);
+        let throw_sites = find_throw_sites(body_str, &body_mask, body_offset + body_open + 1);
+        let mutation_sites =
+            find_mutation_sites(body_str, &body_mask, body_offset + body_open + 1, actor_vars);
 
         out.push(PubFunc {
             name,
@@ -524,6 +567,8 @@ fn find_public_funcs(
             has_method_entered,
             has_entry_note,
             trap_calls,
+            throw_sites,
+            mutation_sites,
         });
 
         i = full_end;
@@ -651,6 +696,191 @@ fn find_trap_calls(body: &str, mask: &[bool], offset: usize) -> Vec<TrapCall> {
             out.push(TrapCall { start: offset + at });
         }
         i = at + pat.len();
+    }
+    out
+}
+
+/// Collect the names of actor-level `var` declarations from the actor body
+/// interior. Only fires at brace-depth 0 so function-local vars are excluded.
+fn find_actor_vars(body: &str, mask: &[bool]) -> Vec<String> {
+    let mut out = Vec::new();
+    let bytes = body.as_bytes();
+    let mut depth: i32 = 0;
+    let mut i = 0;
+    while i < bytes.len() {
+        if !mask[i] {
+            i += 1;
+            continue;
+        }
+        match bytes[i] {
+            b'{' => { depth += 1; i += 1; continue; }
+            b'}' => { if depth > 0 { depth -= 1; } i += 1; continue; }
+            _ => {}
+        }
+        if depth != 0 {
+            i += 1;
+            continue;
+        }
+        // Look for the `var` keyword with word boundaries on both sides.
+        if i + 3 <= bytes.len() && &bytes[i..i + 3] == b"var" {
+            let before_ok = i == 0 || !is_ident_char(bytes[i - 1] as char);
+            let after_ok = i + 3 >= bytes.len() || !is_ident_char(bytes[i + 3] as char);
+            if before_ok && after_ok {
+                let mut j = i + 3;
+                while j < bytes.len() && matches!(bytes[j], b' ' | b'\t') {
+                    j += 1;
+                }
+                let name_start = j;
+                while j < bytes.len() && is_ident_char(bytes[j] as char) {
+                    j += 1;
+                }
+                let name = &body[name_start..j];
+                if !name.is_empty() {
+                    out.push(name.to_string());
+                }
+                i = j;
+                continue;
+            }
+        }
+        i += 1;
+    }
+    out
+}
+
+/// Find all `throw` keywords in code within `body`, returning their offsets
+/// relative to the start of the full source file (via `offset`).
+fn find_throw_sites(body: &str, mask: &[bool], offset: usize) -> Vec<ThrowSite> {
+    let mut out = Vec::new();
+    let bytes = body.as_bytes();
+    let mut i = 0;
+    while let Some(at) = find_in_code(body, mask, i, "throw") {
+        // Word boundary before: must not be preceded by an ident char
+        // (guards against hypothetical `rethrow` keywords).
+        let before_ok = at == 0 || !is_ident_char(bytes[at - 1] as char);
+        // Word boundary after: `throw<expr>` always has whitespace between
+        // the keyword and the expression in valid Motoko.
+        let after_ok = at + 5 >= bytes.len() || !is_ident_char(bytes[at + 5] as char);
+        if before_ok && after_ok {
+            out.push(ThrowSite { start: offset + at });
+        }
+        i = at + 1;
+    }
+    out
+}
+
+/// Return true if `var <ident>` (with word boundary after ident) appears in
+/// code anywhere within `body[..before]`. Used to detect local-var shadows
+/// of actor-level state so we don't fire on assignments to the local copy.
+fn body_declares_var_before(body: &str, mask: &[bool], ident: &str, before: usize) -> bool {
+    let pat = format!("var {ident}");
+    let bytes = body.as_bytes();
+    let mut i = 0;
+    while let Some(at) = find_in_code(body, mask, i, &pat) {
+        if at >= before {
+            break;
+        }
+        let after_pos = at + pat.len();
+        let bound_after =
+            after_pos >= bytes.len() || !is_ident_char(bytes[after_pos] as char);
+        if bound_after {
+            return true;
+        }
+        i = at + 1;
+    }
+    false
+}
+
+/// Find all assignments of the form `<actor_var> :=` in the function body.
+/// Only bare-ident LHS is accepted — record field (`x.f :=`) and array
+/// element (`a[i] :=`) updates are skipped to stay at zero false positives.
+fn find_mutation_sites(
+    body: &str,
+    mask: &[bool],
+    offset: usize,
+    actor_vars: &[String],
+) -> Vec<MutationSite> {
+    let mut out = Vec::new();
+    let bytes = body.as_bytes();
+    let mut i = 0;
+    while i + 2 <= bytes.len() {
+        // Detect `:=` where both bytes are in code.
+        if !(mask[i]
+            && i + 1 < bytes.len()
+            && mask[i + 1]
+            && bytes[i] == b':'
+            && bytes[i + 1] == b'=')
+        {
+            i += 1;
+            continue;
+        }
+        // Walk backward through whitespace to find the LHS ident end.
+        let mut j = i;
+        while j > 0 && matches!(bytes[j - 1], b' ' | b'\t') {
+            j -= 1;
+        }
+        let ident_end = j;
+        // Walk backward through ident chars to find ident start.
+        while j > 0 && is_ident_char(bytes[j - 1] as char) {
+            j -= 1;
+        }
+        let ident_start = j;
+        let ident = &body[ident_start..ident_end];
+        if ident.is_empty() {
+            i += 2;
+            continue;
+        }
+        // Require bare ident: the char immediately before the ident must
+        // not be `.` or `[`, which would indicate a field or element update.
+        let is_bare = ident_start == 0
+            || !matches!(bytes[ident_start - 1], b'.' | b'[');
+        if !is_bare {
+            i += 2;
+            continue;
+        }
+        // Must be a known actor-level var.
+        if !actor_vars.iter().any(|v| v == ident) {
+            i += 2;
+            continue;
+        }
+        // Guard against local-var shadows: if `var <ident>` was declared
+        // anywhere before this point in the function body, the `:=` targets
+        // the local, not the actor-level state.
+        if body_declares_var_before(body, mask, ident, ident_start) {
+            i += 2;
+            continue;
+        }
+        // Find the `;` ending this statement, respecting nested brackets.
+        let mut stmt_end = i + 2;
+        let mut depth = 0i32;
+        while stmt_end < bytes.len() {
+            if !mask[stmt_end] {
+                stmt_end += 1;
+                continue;
+            }
+            match bytes[stmt_end] {
+                b'(' | b'[' | b'{' => depth += 1,
+                b')' | b']' | b'}' => {
+                    if depth == 0 { break; }
+                    depth -= 1;
+                }
+                b';' if depth == 0 => {
+                    stmt_end += 1; // include the `;`
+                    break;
+                }
+                _ => {}
+            }
+            stmt_end += 1;
+        }
+        let assign_line_start = body[..ident_start]
+            .rfind('\n')
+            .map(|p| p + 1)
+            .unwrap_or(0);
+        out.push(MutationSite {
+            ident: ident.to_string(),
+            stmt_end: offset + stmt_end,
+            assign_line_start: offset + assign_line_start,
+        });
+        i = stmt_end;
     }
     out
 }
@@ -1040,5 +1270,101 @@ fn rule_trap_note(f: &PubFunc, trap: &TrapCall, src: &str) -> Option<Candidate> 
         summary: format!("emit tracer.note(\"{}:trapped\") before this Debug.trap", f.name),
         warning: None,
         replacement: Replacement::InsertRaw(inserted),
+    })
+}
+
+fn rule_rollback_note(
+    f: &PubFunc,
+    throw: &ThrowSite,
+    info: &ActorInfo,
+    src: &str,
+) -> Option<Candidate> {
+    if !f.has_begin_trace {
+        return None;
+    }
+    let line_start = src[..throw.start].rfind('\n').map(|i| i + 1).unwrap_or(0);
+    // Idempotency: skip if the previous non-empty line already has a
+    // `:rollback"` note, matching the convention from the Rust rule.
+    let prev_line_end = if line_start == 0 { 0 } else { line_start - 1 };
+    let prev_line_start = src[..prev_line_end]
+        .rfind('\n')
+        .map(|i| i + 1)
+        .unwrap_or(0);
+    if src[prev_line_start..prev_line_end].contains(":rollback\"") {
+        return None;
+    }
+    let indent: String = src[line_start..throw.start]
+        .chars()
+        .take_while(|c| c.is_whitespace())
+        .collect();
+    let inserted = format!(
+        "{indent}{tracer}.note(\"{name}:rollback\");\n",
+        tracer = info.tracer_ident,
+        name = f.name,
+    );
+    Some(Candidate {
+        rule: Rule::MoRollbackNote,
+        byte_range: line_start..line_start,
+        fn_name: f.name.clone(),
+        summary: format!(
+            "emit {tracer}.note(\"{name}:rollback\") before this throw",
+            tracer = info.tracer_ident,
+            name = f.name,
+        ),
+        warning: None,
+        replacement: Replacement::InsertRaw(inserted),
+    })
+}
+
+fn rule_mutation_snapshot(
+    f: &PubFunc,
+    mutation: &MutationSite,
+    info: &ActorInfo,
+    src: &str,
+) -> Option<Candidate> {
+    if !f.has_begin_trace {
+        return None;
+    }
+    let body_end = f.body_range.end.min(src.len());
+    if mutation.stmt_end > body_end {
+        return None;
+    }
+    // Idempotency: skip if any of the next ~5 lines already has a
+    // snapshotText or snapshotBlob call — same lookahead budget as the
+    // Rust mutation-snapshot rule uses for trace_state!.
+    let after = &src[mutation.stmt_end..body_end];
+    let snap_text_pat = format!("{}.snapshotText(", info.tracer_ident);
+    let snap_blob_pat = format!("{}.snapshotBlob(", info.tracer_ident);
+    let lookahead_len = after
+        .lines()
+        .take(5)
+        .map(|l| l.len() + 1)
+        .sum::<usize>()
+        .min(after.len());
+    let lookahead = &after[..lookahead_len];
+    if lookahead.contains(&snap_text_pat) || lookahead.contains(&snap_blob_pat) {
+        return None;
+    }
+    // Derive indentation from the first non-whitespace char on the
+    // assignment's line.
+    let indent: String = src[mutation.assign_line_start..]
+        .chars()
+        .take_while(|c| matches!(c, ' ' | '\t'))
+        .collect();
+    let ident = &mutation.ident;
+    let template = format!(
+        "\n{indent}{tracer}.snapshotText(\"{{KEY}}\", debug_show {ident});",
+        tracer = info.tracer_ident,
+    );
+    Some(Candidate {
+        rule: Rule::MoMutationSnapshot,
+        byte_range: mutation.stmt_end..mutation.stmt_end,
+        fn_name: f.name.clone(),
+        summary: format!("snapshot `{ident}` after mutation"),
+        warning: None,
+        replacement: Replacement::InsertAfterWithKey {
+            template,
+            default_key: ident.clone(),
+        },
     })
 }

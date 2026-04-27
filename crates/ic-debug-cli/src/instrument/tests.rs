@@ -391,6 +391,188 @@ fn untraced() {
     assert!(!rules.contains(&Rule::MutationSnapshot), "got {:?}", rules);
 }
 
+// ---------- Motoko rules ----------
+
+fn mo_rules(src: &str) -> Vec<Rule> {
+    super::motoko::detect(src, std::path::Path::new("test.mo"))
+        .into_iter()
+        .map(|c| c.rule)
+        .collect()
+}
+
+// A minimal actor skeleton that already has the tracer field.  Tests for
+// individual rules add their own methods inside the body.
+fn mo_actor(method_body: &str) -> String {
+    format!(
+        r#"import Trace "../../../../motoko/src/Trace";
+persistent actor self {{
+  transient let tracer = Trace.Tracer(Principal.fromActor(self));
+  var balance : Nat = 0;
+  var items : [Nat] = [];
+  {method_body}
+  public query func __debug_drain() : async Blob {{ tracer.drain() }};
+}}"#
+    )
+}
+
+// --- Rule 6: mo-rollback-note ---
+
+#[test]
+fn mo_rule_6_fires_on_throw_in_traced_method() {
+    let src = mo_actor(
+        r#"public shared(msg) func withdraw(header : ?Trace.TraceHeader, amount : Nat) : async Nat {
+    ignore tracer.beginTrace(header);
+    tracer.methodEntered("withdraw", msg.caller, []);
+    if (amount > 100) {
+      throw Error.reject("too much");
+    };
+    tracer.methodExited(null);
+    amount
+  };"#,
+    );
+    let rules = mo_rules(&src);
+    assert!(rules.contains(&Rule::MoRollbackNote), "got {:?}", rules);
+}
+
+#[test]
+fn mo_rule_6_skips_when_not_traced() {
+    let src = mo_actor(
+        r#"public shared(msg) func withdraw(header : ?Trace.TraceHeader, amount : Nat) : async Nat {
+    if (amount > 100) {
+      throw Error.reject("too much");
+    };
+    amount
+  };"#,
+    );
+    let rules = mo_rules(&src);
+    assert!(!rules.contains(&Rule::MoRollbackNote), "got {:?}", rules);
+}
+
+#[test]
+fn mo_rule_6_skips_when_rollback_note_already_present() {
+    let src = mo_actor(
+        r#"public shared(msg) func withdraw(header : ?Trace.TraceHeader, amount : Nat) : async Nat {
+    ignore tracer.beginTrace(header);
+    tracer.methodEntered("withdraw", msg.caller, []);
+    if (amount > 100) {
+      tracer.note("withdraw:rollback");
+      throw Error.reject("too much");
+    };
+    tracer.methodExited(null);
+    amount
+  };"#,
+    );
+    let rules = mo_rules(&src);
+    assert!(!rules.contains(&Rule::MoRollbackNote), "got {:?}", rules);
+}
+
+#[test]
+fn mo_rule_6_does_not_match_throw_inside_string() {
+    // "throw" inside a string literal must not trigger the rule.
+    let src = mo_actor(
+        r#"public shared(msg) func safe(header : ?Trace.TraceHeader) : async Text {
+    ignore tracer.beginTrace(header);
+    tracer.methodEntered("safe", msg.caller, []);
+    let msg2 = "will throw if needed";
+    tracer.methodExited(null);
+    msg2
+  };"#,
+    );
+    let rules = mo_rules(&src);
+    assert!(!rules.contains(&Rule::MoRollbackNote), "got {:?}", rules);
+}
+
+// --- Rule 7: mo-mutation-snapshot ---
+
+#[test]
+fn mo_rule_7_fires_on_actor_var_assignment_in_traced_method() {
+    let src = mo_actor(
+        r#"public shared(msg) func deposit(header : ?Trace.TraceHeader, amount : Nat) : async () {
+    ignore tracer.beginTrace(header);
+    tracer.methodEntered("deposit", msg.caller, []);
+    balance := balance + amount;
+    tracer.methodExited(null);
+  };"#,
+    );
+    let rules = mo_rules(&src);
+    assert!(rules.contains(&Rule::MoMutationSnapshot), "got {:?}", rules);
+}
+
+#[test]
+fn mo_rule_7_skips_when_not_traced() {
+    let src = mo_actor(
+        r#"public shared(msg) func deposit(header : ?Trace.TraceHeader, amount : Nat) : async () {
+    balance := balance + amount;
+  };"#,
+    );
+    let rules = mo_rules(&src);
+    assert!(!rules.contains(&Rule::MoMutationSnapshot), "got {:?}", rules);
+}
+
+#[test]
+fn mo_rule_7_skips_when_snapshot_already_follows() {
+    let src = mo_actor(
+        r#"public shared(msg) func deposit(header : ?Trace.TraceHeader, amount : Nat) : async () {
+    ignore tracer.beginTrace(header);
+    tracer.methodEntered("deposit", msg.caller, []);
+    balance := balance + amount;
+    tracer.snapshotText("balance", debug_show balance);
+    tracer.methodExited(null);
+  };"#,
+    );
+    let rules = mo_rules(&src);
+    assert!(!rules.contains(&Rule::MoMutationSnapshot), "got {:?}", rules);
+}
+
+#[test]
+fn mo_rule_7_skips_record_field_update() {
+    // `record.field :=` must not fire — only bare var idents are safe.
+    let src = mo_actor(
+        r#"public shared(msg) func update_field(header : ?Trace.TraceHeader) : async () {
+    ignore tracer.beginTrace(header);
+    tracer.methodEntered("update_field", msg.caller, []);
+    let r = { field = 0 };
+    r.field := 1;
+    tracer.methodExited(null);
+  };"#,
+    );
+    let rules = mo_rules(&src);
+    assert!(!rules.contains(&Rule::MoMutationSnapshot), "got {:?}", rules);
+}
+
+#[test]
+fn mo_rule_7_skips_unknown_var() {
+    // A `:=` on a var not declared at actor scope must not fire.
+    let src = mo_actor(
+        r#"public shared(msg) func go(header : ?Trace.TraceHeader) : async () {
+    ignore tracer.beginTrace(header);
+    tracer.methodEntered("go", msg.caller, []);
+    let localVar = 0;
+    localVar := 1;
+    tracer.methodExited(null);
+  };"#,
+    );
+    let rules = mo_rules(&src);
+    assert!(!rules.contains(&Rule::MoMutationSnapshot), "got {:?}", rules);
+}
+
+#[test]
+fn mo_rule_7_skips_local_shadow_of_actor_var() {
+    // If the function declares `var balance` locally, `:=` targets the
+    // local, not the actor-level state — must not fire.
+    let src = mo_actor(
+        r#"public shared(msg) func go(header : ?Trace.TraceHeader) : async () {
+    ignore tracer.beginTrace(header);
+    tracer.methodEntered("go", msg.caller, []);
+    var balance = 0;
+    balance := 42;
+    tracer.methodExited(null);
+  };"#,
+    );
+    let rules = mo_rules(&src);
+    assert!(!rules.contains(&Rule::MoMutationSnapshot), "got {:?}", rules);
+}
+
 // ---------- Idempotency ----------
 
 #[test]

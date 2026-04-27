@@ -86,6 +86,15 @@ pub enum Rule {
     /// Insert `tracer.note("<fn>:trapped")` before a `Debug.trap(...)`
     /// call inside a traced method body.
     MoTrapNote,
+    /// Insert `tracer.note("<fn>:rollback")` before a `throw` expression
+    /// inside a traced method body. Mirrors Rust's rollback-note rule.
+    MoRollbackNote,
+    /// Insert `tracer.snapshotText("<key>", debug_show <var>)` after an
+    /// assignment to an actor-level `var` inside a traced method body.
+    /// Only fires on bare-ident LHS (not record field or array element
+    /// updates) and only when the var is declared at actor scope, not
+    /// as a local shadow. Mirrors Rust's mutation-snapshot rule.
+    MoMutationSnapshot,
 }
 
 impl Rule {
@@ -104,6 +113,8 @@ impl Rule {
             Rule::MoWrapMethodInsertHeader => "mo-wrap-method-insert-header",
             Rule::MoEntryNote => "mo-entry-note",
             Rule::MoTrapNote => "mo-trap-note",
+            Rule::MoRollbackNote => "mo-rollback-note",
+            Rule::MoMutationSnapshot => "mo-mutation-snapshot",
         }
     }
 }
